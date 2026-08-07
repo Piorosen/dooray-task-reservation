@@ -279,3 +279,23 @@ button.primary:disabled {
   color: #9ca3af;
   padding: 30px 0;
 }
+
+.mention-row {
+  margin-top: 6px;
+}
+
+.mention-btn {
+  width: auto;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.mention-results {
+  margin-top: 6px;
+}
+
+input[type="file"] {
+  width: 100%;
+  font-size: 12px;
+  color: #374151;
+}

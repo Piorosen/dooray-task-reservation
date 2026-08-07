@@ -39,6 +39,21 @@ function deriveApiBase(doorayUrl) {
 
 // ───────────────────────── Dooray API ─────────────────────────
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Dooray API 는 rate limit(초당 5, 버스트 20)이 있어 429 응답 시 대기 후 재시도한다
+async function fetchWithRetry(url, opts, tries = 3) {
+  let res;
+  for (let i = 0; i < tries; i += 1) {
+    res = await fetch(url, opts);
+    if (res.status !== 429) return res;
+    await sleep(1300 * (i + 1));
+  }
+  return res;
+}
+
 async function apiFetch(method, path, body) {
   const settings = await getSettings();
   if (!settings || !settings.apiKey) {
@@ -46,7 +61,7 @@ async function apiFetch(method, path, body) {
   }
   let res;
   try {
-    res = await fetch(settings.apiBase + path, {
+    res = await fetchWithRetry(settings.apiBase + path, {
       method,
       headers: {
         Authorization: `dooray-api ${settings.apiKey}`,
@@ -72,6 +87,88 @@ async function apiFetch(method, path, body) {
     throw new Error(json.header.resultMessage || 'Dooray API 오류');
   }
   return json;
+}
+
+// ───────────────────────── 파일 업로드 ─────────────────────────
+// 검증 결과: POST {api}/project/v1/.../files 는 307로 file-api.{cloud}/uploads/... 를 가리키며,
+// 리다이렉트 대상 URL이 규칙적이므로 file-api 로 직접 업로드한다 (sota.dooray.com 실측 확인).
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic)$/i;
+
+function b64ToBlob(b64, type) {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: type || 'application/octet-stream' });
+}
+
+function isImageFile(file) {
+  return (file.type || '').startsWith('image/') || IMAGE_EXT.test(file.name || '');
+}
+
+async function uploadPostFile(projectId, postId, file) {
+  const settings = await getSettings();
+  const path = `/project/v1/projects/${projectId}/posts/${postId}/files`;
+  const candidates = [];
+  if (/^https:\/\/api\./.test(settings.apiBase)) {
+    candidates.push(settings.apiBase.replace('https://api.', 'https://file-api.') + '/uploads' + path);
+  }
+  candidates.push(settings.apiBase + path); // 자체 설치형 등 폴백
+
+  let lastError = new Error('업로드 시도 실패');
+  for (const url of candidates) {
+    const form = new FormData();
+    form.append('file', b64ToBlob(file.dataBase64, file.type), file.name);
+    try {
+      const res = await fetchWithRetry(url, {
+        method: 'POST',
+        headers: { Authorization: `dooray-api ${settings.apiKey}` },
+        body: form,
+      });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.result?.id && json?.header?.isSuccessful !== false) {
+        return json.result.id;
+      }
+      lastError = new Error(json?.header?.resultMessage || `HTTP ${res.status}`);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw new Error(`파일 업로드 실패(${file.name}): ${lastError.message}`);
+}
+
+// 업로드된 파일의 본문/댓글 참조 마크업 (이미지는 인라인 표시)
+function fileRef(file, fileId, mime) {
+  if (mime === 'text/html') {
+    return isImageFile(file)
+      ? `<p><img src="/files/${fileId}" alt="${file.name}"></p>`
+      : `<p><a href="/files/${fileId}">${file.name}</a></p>`;
+  }
+  return isImageFile(file) ? `![${file.name}](/files/${fileId})` : `[${file.name}](/files/${fileId})`;
+}
+
+function appendRefs(content, refs, mime) {
+  if (!refs) return content;
+  if (mime === 'text/html') return (content || '') + refs;
+  return content ? `${content}\n\n${refs}` : refs;
+}
+
+// 파일 전체 처리: 업로드 후,
+// - cid 가 있는 파일(에디터에서 캡처한 인라인 이미지)은 본문의 cid: 자리표시자를 /files/{id} 로 교체
+// - 그 외 파일은 본문 끝에 참조(이미지는 인라인, 일반 파일은 링크)를 덧붙인다
+async function processFiles(projectId, postId, files, mime, content) {
+  if (!files?.length) return content;
+  const refs = [];
+  for (const f of files) {
+    const fileId = await uploadPostFile(projectId, postId, f);
+    if (f.cid) {
+      content = content.split(`cid:${f.cid}`).join(`/files/${fileId}`);
+    } else {
+      refs.push(fileRef(f, fileId, mime));
+    }
+  }
+  const refStr = mime === 'text/html' ? refs.join('') : refs.join('\n');
+  return appendRefs(content, refStr, mime);
 }
 
 // 업무 상세 조회 응답의 users(PostUser) → 업무 수정 요청의 users(CreatePostUser) 변환.
@@ -104,18 +201,34 @@ async function executeAction(action, p) {
         body: { mimeType: mime, content: p.content || '' },
         users,
       });
-      return res?.result?.id || null;
+      const newPostId = res?.result?.id || null;
+      if (p.files?.length && newPostId) {
+        // 첨부는 업무 생성 후에만 올릴 수 있다 → 업로드 후 본문(cid 교체/참조 추가)을 다시 PUT
+        try {
+          const newContent = await processFiles(p.projectId, newPostId, p.files, mime, p.content || '');
+          await apiFetch('PUT', `/project/v1/projects/${p.projectId}/posts/${newPostId}`, {
+            subject: p.subject,
+            body: { mimeType: mime, content: newContent },
+            users,
+          });
+        } catch (e) {
+          throw new Error(`업무는 생성되었지만 첨부 처리에 실패했습니다: ${e.message}`);
+        }
+      }
+      return newPostId;
     }
     case 'task-update': {
       const detail = (
         await apiFetch('GET', `/project/v1/projects/${p.projectId}/posts/${p.postId}`)
       )?.result;
       if (!detail) throw new Error('기존 업무를 불러오지 못했습니다.');
+      const newBody = p.content
+        ? { mimeType: mime, content: p.content }
+        : { mimeType: detail.body?.mimeType || mime, content: detail.body?.content ?? '' };
+      newBody.content = await processFiles(p.projectId, p.postId, p.files, newBody.mimeType, newBody.content);
       const body = {
         subject: p.subject || detail.subject,
-        body: p.content
-          ? { mimeType: mime, content: p.content }
-          : { mimeType: detail.body?.mimeType || mime, content: detail.body?.content ?? '' },
+        body: newBody,
         users: {
           to: (detail.users?.to || []).map(toCreateUser).filter(Boolean),
           cc: (detail.users?.cc || []).map(toCreateUser).filter(Boolean),
@@ -136,20 +249,24 @@ async function executeAction(action, p) {
       await apiFetch('DELETE', `/project/v1/projects/${p.projectId}/posts/${p.postId}`);
       return p.postId;
     case 'comment-create': {
+      // 댓글 전용 첨부 API는 없음 → 파일은 업무(post)에 올리고 댓글 본문에서 참조한다
+      const content = await processFiles(p.projectId, p.postId, p.files, mime, p.content || '');
       const res = await apiFetch(
         'POST',
         `/project/v1/projects/${p.projectId}/posts/${p.postId}/logs`,
-        { body: { mimeType: mime, content: p.content || '' } },
+        { body: { mimeType: mime, content } },
       );
       return res?.result?.id || null;
     }
-    case 'comment-update':
+    case 'comment-update': {
+      const content = await processFiles(p.projectId, p.postId, p.files, mime, p.content || '');
       await apiFetch(
         'PUT',
         `/project/v1/projects/${p.projectId}/posts/${p.postId}/logs/${p.logId}`,
-        { body: { mimeType: mime, content: p.content || '' } },
+        { body: { mimeType: mime, content } },
       );
       return p.logId;
+    }
     case 'comment-delete':
       await apiFetch(
         'DELETE',
@@ -264,6 +381,36 @@ async function handleMessage(msg) {
     case 'listProjects': {
       const res = await apiFetch('GET', '/project/v1/projects?member=me&state=active&page=0&size=100');
       return (res?.result || []).map((pr) => ({ id: pr.id, code: pr.code }));
+    }
+    case 'searchMembers': {
+      // 멘션 삽입용 멤버 검색 (검증: /common/v1/members?name= 이 이름/userCode 를 반환)
+      const me = await apiFetch('GET', '/common/v1/members/me');
+      const orgId = me?.result?.defaultOrganization?.id || '';
+      const res = await apiFetch(
+        'GET',
+        `/common/v1/members?name=${encodeURIComponent(msg.name)}&size=20`,
+      );
+      return {
+        orgId,
+        members: (res?.result || []).map((m) => ({
+          id: m.id,
+          name: m.name,
+          userCode: m.userCode || '',
+        })),
+      };
+    }
+    case 'resolvePost': {
+      // postId 만으로 업무를 조회해 소속 프로젝트를 알아낸다 (content script의 URL 감지용)
+      const res = await apiFetch('GET', `/project/v1/posts/${msg.postId}`);
+      const post = res?.result;
+      if (!post?.id) throw new Error('업무를 찾을 수 없습니다.');
+      return {
+        postId: post.id,
+        projectId: post.project?.id,
+        number: post.number,
+        subject: post.subject,
+        projectCode: post.project?.code || '',
+      };
     }
     case 'listPosts': {
       const res = await apiFetch(

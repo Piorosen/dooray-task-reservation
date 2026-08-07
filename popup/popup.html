@@ -64,6 +64,16 @@
     <div class="field" id="f-content" hidden>
       <label for="content" id="content-label">본문 (마크다운)</label>
       <textarea id="content" rows="5"></textarea>
+      <div class="row mention-row">
+        <input id="mention-name" type="text" placeholder="멘션할 멤버 이름 검색" />
+        <button id="mention-add" class="icon-btn mention-btn" title="본문에 멘션 삽입">@추가</button>
+      </div>
+      <select id="mention-results" class="mention-results" hidden></select>
+    </div>
+
+    <div class="field" id="f-files" hidden>
+      <label for="files">첨부파일 (이미지는 본문/댓글에 인라인 표시)</label>
+      <input id="files" type="file" multiple />
     </div>
 
     <div class="field" id="f-assignme" hidden>

@@ -17,25 +17,29 @@ const ACTION_FIELDS = {
     subject: '제목',
     content: '본문 (마크다운)',
     assignMe: true,
+    files: true,
   },
   'task-update': {
     post: true,
     subject: '새 제목 (비워두면 기존 제목 유지)',
     content: '새 본문 (비워두면 기존 본문 유지)',
+    files: true,
   },
   'task-delete': {
     post: true,
     warning:
-      '업무 삭제는 Dooray 공개 API에 문서화되어 있지 않아 환경에 따라 거부될 수 있습니다. 실패하면 알림과 예약 목록에서 사유를 확인할 수 있습니다.',
+      '업무 삭제는 Dooray 공개 API에서 지원되지 않는 것으로 확인되었습니다(DELETE 요청 시 404 응답 실측). 예약해도 실패할 가능성이 높으니, 웹 UI에서 직접 삭제하는 것을 권장합니다.',
   },
   'comment-create': {
     post: true,
     content: '댓글 내용 (마크다운)',
+    files: true,
   },
   'comment-update': {
     post: true,
     comment: true,
     content: '새 댓글 내용 (마크다운)',
+    files: true,
   },
   'comment-delete': {
     post: true,
@@ -60,6 +64,16 @@ function send(msg) {
 function setStatus(el, text, kind) {
   el.textContent = text;
   el.className = `status${kind ? ` ${kind}` : ''}`;
+}
+
+async function fileToB64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
 }
 
 // ───────────────────────── 탭 ─────────────────────────
@@ -196,6 +210,7 @@ function applyActionFields() {
   $('f-content').hidden = !cfg.content;
   if (cfg.content) $('content-label').textContent = cfg.content;
   $('f-assignme').hidden = !cfg.assignMe;
+  $('f-files').hidden = !cfg.files;
   $('delete-warning').hidden = !cfg.warning;
   if (cfg.warning) $('delete-warning').textContent = `⚠️ ${cfg.warning}`;
 
@@ -250,12 +265,16 @@ $('submit').addEventListener('click', async () => {
   const subject = $('subject').value.trim();
   const content = $('content').value;
 
+  const fileList = cfg.files ? [...$('files').files] : [];
+
   if (action === 'task-create' && !subject)
     return setStatus(statusEl, '업무 제목을 입력하세요.', 'err');
-  if (action === 'task-update' && !subject && !content.trim())
-    return setStatus(statusEl, '새 제목 또는 새 본문 중 하나는 입력해야 합니다.', 'err');
-  if ((action === 'comment-create' || action === 'comment-update') && !content.trim())
-    return setStatus(statusEl, '댓글 내용을 입력하세요.', 'err');
+  if (action === 'task-update' && !subject && !content.trim() && !fileList.length)
+    return setStatus(statusEl, '새 제목·새 본문·첨부파일 중 하나는 입력해야 합니다.', 'err');
+  if ((action === 'comment-create' || action === 'comment-update') && !content.trim() && !fileList.length)
+    return setStatus(statusEl, '댓글 내용 또는 첨부파일을 입력하세요.', 'err');
+  if (fileList.reduce((sum, f) => sum + f.size, 0) > 25 * 1024 * 1024)
+    return setStatus(statusEl, '첨부파일 총 용량은 25MB 이하만 지원합니다.', 'err');
 
   const when = $('scheduled-at').value;
   if (!when) return setStatus(statusEl, '예약 시각을 선택하세요.', 'err');
@@ -268,6 +287,13 @@ $('submit').addEventListener('click', async () => {
   if (cfg.subject && subject) params.subject = subject;
   if (cfg.content && content.trim()) params.content = content;
   if (cfg.assignMe) params.assignMe = $('assign-me').checked;
+  if (fileList.length) {
+    setStatus(statusEl, '첨부파일 읽는 중…');
+    params.files = [];
+    for (const f of fileList) {
+      params.files.push({ name: f.name, type: f.type, dataBase64: await fileToB64(f) });
+    }
+  }
 
   const target =
     action === 'task-create' ? `"${subject}"` : post ? post.label : '';
@@ -279,12 +305,60 @@ $('submit').addEventListener('click', async () => {
     setStatus(statusEl, '예약이 등록되었습니다.', 'ok');
     $('subject').value = '';
     $('content').value = '';
+    $('files').value = '';
     switchTab('list');
   } catch (e) {
     setStatus(statusEl, `예약 등록 실패: ${e.message}`, 'err');
   } finally {
     $('submit').disabled = false;
   }
+});
+
+// ───────────────────────── 멘션 삽입 ─────────────────────────
+// 검증된 형식: [@이름](dooray://{orgId}/members/{memberId} "member")
+// 서버가 마크업을 인식해 알림을 보내고 org ID도 정규화한다.
+
+function insertMention(orgId, member) {
+  const ta = $('content');
+  const markup = `[@${member.name}](dooray://${orgId}/members/${member.id} "member") `;
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, start) + markup + ta.value.slice(end);
+  ta.focus();
+  ta.selectionStart = ta.selectionEnd = start + markup.length;
+  $('mention-name').value = '';
+  $('mention-results').hidden = true;
+  setStatus($('new-status'), `@${member.name} 멘션이 삽입되었습니다.`, 'ok');
+}
+
+$('mention-add').addEventListener('click', async () => {
+  const statusEl = $('new-status');
+  const name = $('mention-name').value.trim();
+  if (!name) return setStatus(statusEl, '멘션할 멤버 이름을 입력하세요.', 'err');
+  $('mention-results').hidden = true;
+  try {
+    const { orgId, members } = await send({ type: 'searchMembers', name });
+    if (!members.length) return setStatus(statusEl, `'${name}' 멤버를 찾지 못했습니다.`, 'err');
+    if (members.length === 1) return insertMention(orgId, members[0]);
+    const sel = $('mention-results');
+    sel.innerHTML = '<option value="">멘션할 멤버 선택…</option>';
+    for (const m of members) {
+      const opt = document.createElement('option');
+      opt.value = JSON.stringify({ orgId, member: m });
+      opt.textContent = m.userCode ? `${m.name} (${m.userCode})` : m.name;
+      sel.appendChild(opt);
+    }
+    sel.hidden = false;
+    setStatus(statusEl, `${members.length}명이 검색되었습니다. 목록에서 선택하세요.`);
+  } catch (e) {
+    setStatus(statusEl, `멤버 검색 실패: ${e.message}`, 'err');
+  }
+});
+
+$('mention-results').addEventListener('change', (e) => {
+  if (!e.target.value) return;
+  const { orgId, member } = JSON.parse(e.target.value);
+  insertMention(orgId, member);
 });
 
 // ───────────────────────── 예약 목록 ─────────────────────────
