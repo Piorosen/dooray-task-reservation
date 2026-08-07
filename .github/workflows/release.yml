@@ -1,0 +1,23 @@
+name: Deploy to Chrome Web Store
+
+on:
+  workflow_dispatch: # Actions 탭에서 수동 실행
+  push:
+    tags: ['v*'] # 예: git tag v1.2.3 && git push --tags
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 패키지 생성
+        run: zip -r extension.zip manifest.json background.js content.js popup icons
+
+      - name: 업로드 및 검토 제출
+        run: node scripts/deploy-webstore.mjs extension.zip
+        env:
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
