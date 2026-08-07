@@ -41,6 +41,8 @@ sota.dooray.com 실계정으로 인증·업무 생성/수정·댓글 CRUD·첨�
 
 ## 설치
 
+> 📖 **스크린샷이 포함된 상세 가이드: [docs/INSTALL.md](docs/INSTALL.md)**
+
 1. 크롬에서 `chrome://extensions` 접속
 2. 우측 상단 **개발자 모드** 켜기
 3. **압축해제된 확장 프로그램을 로드** 클릭 → 이 폴더 선택
