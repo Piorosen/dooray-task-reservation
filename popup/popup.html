@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dooray 예약</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Dooray 예약</h1>
+    <nav>
+      <button class="tab active" data-tab="new">새 예약</button>
+      <button class="tab" data-tab="list">예약 목록</button>
+      <button class="tab" data-tab="settings">설정</button>
+    </nav>
+  </header>
+
+  <!-- ───────── 새 예약 ───────── -->
+  <section id="tab-new">
+    <div class="field">
+      <label for="action">작업 유형</label>
+      <select id="action">
+        <option value="task-create">업무 생성</option>
+        <option value="task-update">업무 수정 (제목/본문)</option>
+        <option value="task-delete">업무 삭제</option>
+        <option value="comment-create">댓글 작성</option>
+        <option value="comment-update">댓글 수정</option>
+        <option value="comment-delete">댓글 삭제</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="project">프로젝트</label>
+      <div class="row">
+        <select id="project"><option value="">불러오는 중…</option></select>
+        <button id="reload-projects" class="icon-btn" title="새로고침">↻</button>
+      </div>
+      <input id="project-manual" type="text" placeholder="프로젝트 ID 직접 입력" hidden />
+    </div>
+
+    <div class="field" id="f-post" hidden>
+      <label for="post">업무</label>
+      <div class="row">
+        <select id="post"><option value="">프로젝트를 먼저 선택하세요</option></select>
+        <button id="reload-posts" class="icon-btn" title="새로고침">↻</button>
+      </div>
+      <input id="post-manual" type="text" placeholder="업무 ID 직접 입력" hidden />
+    </div>
+
+    <div class="field" id="f-comment" hidden>
+      <label for="comment">댓글</label>
+      <div class="row">
+        <select id="comment"><option value="">업무를 먼저 선택하세요</option></select>
+        <button id="reload-comments" class="icon-btn" title="새로고침">↻</button>
+      </div>
+      <input id="comment-manual" type="text" placeholder="댓글(log) ID 직접 입력" hidden />
+    </div>
+
+    <div class="field" id="f-subject" hidden>
+      <label for="subject" id="subject-label">제목</label>
+      <input id="subject" type="text" />
+    </div>
+
+    <div class="field" id="f-content" hidden>
+      <label for="content" id="content-label">본문 (마크다운)</label>
+      <textarea id="content" rows="5"></textarea>
+    </div>
+
+    <div class="field" id="f-assignme" hidden>
+      <label class="checkbox"><input type="checkbox" id="assign-me" /> 나를 담당자로 지정</label>
+    </div>
+
+    <p id="delete-warning" class="warn" hidden></p>
+
+    <div class="field">
+      <label for="scheduled-at">예약 시각</label>
+      <input id="scheduled-at" type="datetime-local" step="60" />
+    </div>
+
+    <button id="submit" class="primary">예약 등록</button>
+    <p id="new-status" class="status"></p>
+  </section>
+
+  <!-- ───────── 예약 목록 ───────── -->
+  <section id="tab-list" hidden>
+    <div id="resv-list"></div>
+  </section>
+
+  <!-- ───────── 설정 ───────── -->
+  <section id="tab-settings" hidden>
+    <div class="field">
+      <label for="dooray-url">Dooray URL</label>
+      <input id="dooray-url" type="text" placeholder="https://sota.dooray.com" />
+    </div>
+    <div class="field">
+      <label for="api-key">API Key (개인 인증 토큰)</label>
+      <input id="api-key" type="password" autocomplete="off" />
+    </div>
+    <div class="row">
+      <button id="save-settings" class="primary">저장</button>
+      <button id="test-conn">연결 테스트</button>
+    </div>
+    <p id="settings-status" class="status"></p>
+    <p class="hint">
+      API Key 발급: Dooray 웹 접속 → 우측 상단 톱니(설정) → <b>API</b> 메뉴 →
+      <b>개인 인증 토큰</b> 생성 후 붙여넣기.
+    </p>
+    <p class="hint">
+      예약은 이 컴퓨터의 크롬이 실행 중일 때 자동 전송됩니다. 예약 시각에 크롬이
+      꺼져 있었다면, 다음에 크롬을 켰을 때 밀린 예약을 자동으로 전송합니다.
+    </p>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>
