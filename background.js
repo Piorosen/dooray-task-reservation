@@ -43,14 +43,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Dooray API 는 rate limit(초당 5, 버스트 20)이 있어 429 응답 시 대기 후 재시도한다
+// Dooray API 는 rate limit(초당 5, 버스트 20)이 있어 429 응답 시 대기 후 재시도한다.
+// 예약 실행은 사용자가 자리에 없을 때 일어나므로 일시적 서버 오류(5xx)와
+// 네트워크 단절도 재시도한다 — 여기서 포기하면 예약 자체가 실패로 남는다.
 async function fetchWithRetry(url, opts, tries = 3) {
   let res;
+  let lastError = null;
   for (let i = 0; i < tries; i += 1) {
-    res = await fetch(url, opts);
-    if (res.status !== 429) return res;
-    await sleep(1300 * (i + 1));
+    try {
+      res = await fetch(url, opts);
+      if (res.status !== 429 && res.status < 500) return res;
+      lastError = null;
+    } catch (e) {
+      lastError = e;
+    }
+    if (i < tries - 1) await sleep(1300 * (i + 1));
   }
+  if (lastError) throw lastError;
   return res;
 }
 
@@ -398,6 +407,32 @@ async function handleMessage(msg) {
           userCode: m.userCode || '',
         })),
       };
+    }
+    case 'resolveMentions': {
+      // 에디터에서 캡처한 멘션 중 멤버 ID를 못 얻은 것들을 이름으로 일괄 조회한다.
+      // ID가 정확하면 orgId는 서버가 정규화해 주므로(실측) me 기준 값으로 충분하다.
+      const me = await apiFetch('GET', '/common/v1/members/me');
+      const orgId = me?.result?.defaultOrganization?.id || '';
+      const results = [];
+      for (const name of msg.names || []) {
+        try {
+          const res = await apiFetch(
+            'GET',
+            `/common/v1/members?name=${encodeURIComponent(name)}&size=20`,
+          );
+          const all = (res?.result || []).map((m) => ({
+            id: m.id,
+            name: m.name,
+            userCode: m.userCode || '',
+          }));
+          // 부분 일치까지 돌아오므로 이름이 정확히 같은 후보를 우선한다
+          const exact = all.filter((m) => m.name === name);
+          results.push({ name, candidates: exact.length ? exact : all });
+        } catch {
+          results.push({ name, candidates: [] });
+        }
+      }
+      return { orgId, results };
     }
     case 'resolvePost': {
       // postId 만으로 업무를 조회해 소속 프로젝트를 알아낸다 (content script의 URL 감지용)

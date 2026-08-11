@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 같은 브랜치에 연속 푸시하면 이전 실행은 취소한다
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: 단위 테스트 (마크다운 변환 · 예약 로직)
+        run: npm test
+
+      # Puppeteer 가 내려받은 Chrome 으로 실제 브라우저에서 검증한다.
+      # 실계정 통합 테스트(test:live)는 API Key 가 필요해 CI 에서는 제외한다.
+      - name: 브라우저 UI · 패키지 테스트
+        run: npm run test:ui
+
+      - name: 배포 패키지 생성 확인
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extension-package
+          path: dist/*.zip
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: failure-screenshots
+          path: test-artifacts/**/*.png
+          if-no-files-found: ignore

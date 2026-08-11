@@ -15,7 +15,7 @@ const env = (key) => {
 const zipPath = process.argv[2] || 'extension.zip';
 if (!fs.existsSync(zipPath)) {
   console.error(`패키지 파일이 없습니다: ${zipPath}`);
-  console.error('먼저: zip -r extension.zip manifest.json background.js content.js popup icons');
+  console.error('먼저: npm run build -- --out dist/extension.zip');
   process.exit(1);
 }
 

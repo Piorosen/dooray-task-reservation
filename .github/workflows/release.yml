@@ -3,7 +3,7 @@ name: Deploy to Chrome Web Store
 on:
   workflow_dispatch: # Actions 탭에서 수동 실행
   push:
-    tags: ['v*'] # 예: git tag v1.2.3 && git push --tags
+    tags: ['v*'] # 예: git tag v1.3.0 && git push --tags
 
 jobs:
   deploy:
@@ -11,13 +11,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 패키지 생성
-        run: zip -r extension.zip manifest.json background.js content.js popup icons
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 의존성 설치
+        run: npm ci
+
+      # 깨진 패키지가 스토어로 나가지 않도록 빌드 전에 검증한다
+      # (실계정 테스트는 자격증명이 필요하므로 CI 에서 제외)
+      - name: 단위 테스트
+        run: npm test
+
+      - name: 패키지 설치 검증 (실제 Chrome 에 로드)
+        run: npm run test:package
+
+      - name: 업로드용 패키지 생성
+        run: npm run build -- --out dist/extension.zip
 
       - name: 업로드 및 검토 제출
-        run: node scripts/deploy-webstore.mjs extension.zip
+        run: node scripts/deploy-webstore.mjs dist/extension.zip
         env:
           CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
           CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+
+      - name: 패키지 아티팩트 보관
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-package
+          path: dist/*.zip
+          if-no-files-found: warn

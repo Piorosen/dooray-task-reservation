@@ -1,0 +1,46 @@
+<!doctype html>
+<!--
+  Dooray 업무 상세 화면 모사 페이지 (UI 테스트용).
+  실제 Dooray 처럼 contenteditable 댓글 에디터 + "댓글 작성" 버튼 구조를 갖고,
+  본문 수정용 에디터도 함께 열어 두어 "여러 에디터 중 올바른 것을 고르는지"를 검증한다.
+-->
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>업무 상세 — 모사</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; color: #1f2937; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+    .editor {
+      border: 1px solid #d1d5db; border-radius: 6px; padding: 10px;
+      min-height: 90px; margin-bottom: 10px; background: #fff;
+    }
+    .toolbar { display: flex; gap: 8px; align-items: center; }
+    button { padding: 6px 14px; border-radius: 4px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; }
+    h3 { margin: 0 0 10px; font-size: 14px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <h2>#42 예약 기능 검증용 업무</h2>
+
+  <div class="card" id="body-panel">
+    <h3>업무 본문 수정</h3>
+    <div class="editor" contenteditable="true" id="body-editor"><p>업무 본문입니다.</p></div>
+    <div class="toolbar"><button id="body-save">저장</button></div>
+  </div>
+
+  <div class="card" id="comment-panel">
+    <h3>댓글</h3>
+    <div class="editor" contenteditable="true" id="comment-editor"></div>
+    <div class="toolbar">
+      <button id="comment-cancel">취소</button>
+      <button id="comment-save">댓글 작성</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>편집기가 없는 영역 (예약 버튼이 붙으면 안 됨)</h3>
+    <div class="toolbar"><button id="unrelated-save">저장</button></div>
+  </div>
+</body>
+</html>
