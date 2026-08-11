@@ -106,21 +106,64 @@ test('패키지 크기가 스토어 제한(128MB) 안에 있다', () => {
 
 // ───────────────────────── 실제 설치 동작 ─────────────────────────
 
+test('패키지된 백그라운드가 마크다운을 기본 형식으로 쓴다', () => {
+  const src = fs.readFileSync(path.join(UNPACKED, 'background.js'), 'utf8');
+  assert.match(src, /DEFAULT_MIME\s*=\s*'text\/x-markdown'/,
+    'HTML 로 되돌아가면 멘션과 코드 블록이 깨진다');
+  const cs = fs.readFileSync(path.join(UNPACKED, 'content.js'), 'utf8');
+  assert.match(cs, /MIME\s*=\s*'text\/x-markdown'/);
+});
+
 test('서비스 워커가 등록되고 필요한 chrome API 를 쓸 수 있다', async () => {
   const target = await browser.waitForTarget((t) => t.type() === 'service_worker');
   const worker = await target.worker();
+  // 최상위 const 는 전역 객체 속성이 아니라 워커가 재시작되면 참조할 수 없다.
+  // 전역에 노출되는 함수 선언과 chrome API 만 확인한다.
   const probe = await worker.evaluate(() => ({
     alarms: typeof chrome.alarms?.create,
     storage: typeof chrome.storage?.local?.get,
     notifications: typeof chrome.notifications?.create,
     handler: typeof handleMessage,
-    mime: DEFAULT_MIME,
+    runner: typeof runReservation,
   }));
-  assert.equal(probe.alarms, 'function');
-  assert.equal(probe.storage, 'function');
-  assert.equal(probe.notifications, 'function');
-  assert.equal(probe.handler, 'function');
-  assert.equal(probe.mime, 'text/x-markdown', 'Dooray 네이티브 형식이어야 한다');
+  assert.deepEqual(probe, {
+    alarms: 'function',
+    storage: 'function',
+    notifications: 'function',
+    handler: 'function',
+    runner: 'function',
+  });
+});
+
+test('설치된 확장에서 예약 등록 → 알람 스케줄링이 실제로 동작한다', async () => {
+  const target = await browser.waitForTarget((t) => t.type() === 'service_worker');
+  const worker = await target.worker();
+  const when = Date.now() + 3600_000;
+
+  const result = await worker.evaluate(async (scheduledAt) => {
+    const resv = await handleMessage({
+      type: 'saveReservation',
+      action: 'comment-create',
+      params: { projectId: 'P', postId: 'T', content: '패키지 검증' },
+      summary: '패키지 검증',
+      scheduledAt,
+    });
+    const alarms = await chrome.alarms.getAll();
+    const stored = await handleMessage({ type: 'getReservations' });
+    await handleMessage({ type: 'deleteReservation', id: resv.id });
+    const after = await chrome.alarms.getAll();
+    return {
+      status: resv.status,
+      alarmWhen: alarms.find((a) => a.name === `resv:${resv.id}`)?.scheduledTime,
+      storedCount: stored.length,
+      leftover: after.some((a) => a.name === `resv:${resv.id}`),
+    };
+  }, when);
+
+  assert.equal(result.status, 'pending');
+  assert.equal(result.alarmWhen, when, '예약 시각으로 알람이 걸려야 한다');
+  assert.equal(result.storedCount, 1);
+  assert.equal(result.leftover, false, '삭제 시 알람도 함께 지워져야 한다');
 });
 
 test('팝업이 오류 없이 렌더된다', async () => {
